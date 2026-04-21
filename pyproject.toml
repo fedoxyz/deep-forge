@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lora-forge"
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.1.0",
+    "torchvision>=0.16.0",
+    "safetensors>=0.4.0",
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0",
+    "pydantic>=2.0.0",
+    "tensorboard>=2.15.0",
+    "optuna>=3.4.0",
+    "Pillow>=10.0.0",
+    "pyyaml>=6.0",
+    "python-multipart>=0.0.6",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "black", "ruff"]
+8bit = ["bitsandbytes"]
+prodigy = ["prodigyopt"]

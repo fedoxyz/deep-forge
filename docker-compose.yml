@@ -1,0 +1,61 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    container_name: deep-forge-backend
+    ports:
+      - "8000:8000"
+      - "6006:6006"
+    volumes:
+      - ./data/models:/data/models
+      - ./data/dataset:/data/dataset
+      - ./data/hf_cache:/root/.cache/huggingface
+      - ./data/logs/tensorboard:/data/logs/tensorboard 
+      - ./data/logs:/data/logs                 # JSON logs etc
+      - ./data/outputs:/data/outputs
+      - ./saved_configs:/app/saved_configs
+      - ./saved_model_specs:/app/saved_model_specs
+      - ./configs:/app/configs
+      - ./data/workspace_datasets:/workspace/datasets
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CONFIGS_DIR=/app/saved_configs
+      - MODEL_SPECS_DIR=/app/saved_model_specs
+      - TB_LOG_DIR=/data/logs/tensorboard
+      - API_PORT=8000
+      - HF_HOME=/root/.cache/huggingface
+      - DATASET_BASE_DIR=/workspace/datasets                                    
+      - DATASET_PERSIST_FILE=/workspace/datasets/.loaded_datasets.json
+      - RUNS_DIR=/data/outputs/runs
+      - TRAINING_LOG_FILE=/data/logs/training_console.log
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.frontend
+    container_name: deep-forge-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  tensorboard:
+    image: tensorflow/tensorflow:latest
+    container_name: lora-forge-tensorboard
+    command: tensorboard --logdir=/logs --host=0.0.0.0 --port=6007 --reload_interval=5
+    ports:
+      - "6007:6007"
+    volumes:
+      - ./data/logs/tensorboard:/logs
+    restart: unless-stopped

@@ -1,0 +1,33 @@
+FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+
+WORKDIR /app
+
+# System deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/Tongyi-MAI/Z-Image /app/z_image_repo && \
+    pip install --no-cache-dir -e /app/z_image_repo
+
+# Python deps
+COPY backend/requirements.txt /app/backend/requirements.txt
+RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+
+# Copy source
+COPY backend/ /app/backend/
+COPY scripts/ /app/scripts/
+COPY configs/ /app/configs/
+
+# Create dirs
+RUN mkdir -p /data/models /data/dataset /data/logs/tensorboard /data/outputs /app/saved_configs
+
+# Env
+ENV PYTHONPATH=/app
+ENV CONFIGS_DIR=/app/saved_configs
+
+RUN chmod +x /app/scripts/entrypoint.sh
+
+EXPOSE 8000 6006
+
+CMD ["/app/scripts/entrypoint.sh"]
