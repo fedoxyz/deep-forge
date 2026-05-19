@@ -521,16 +521,31 @@ def _seed(config):
 
 def _load_dataloaders(config):
     ds = config.get("dataset", {})
+    
     if ds.get("builtin"):
         from backend.datasets.builtin_datasets import create_builtin_dataloaders
         t, v, _ = create_builtin_dataloaders(
             ds["builtin"], batch_size=ds.get("batch_size", 64),
             num_workers=ds.get("num_workers", 2), val_split=ds.get("validation_split", 0.1))
         return t, v
+    
     if ds.get("path"):
-        from backend.datasets.image_caption import create_dataloader
-        t, _ = create_dataloader(ds["path"], batch_size=ds.get("batch_size", 1))
-        return t, None
+        dataset_type = ds.get("dataset_type", "caption")
+        
+        if dataset_type == "classification":
+            from backend.datasets.classification import create_classification_dataloader
+            t, v = create_classification_dataloader(
+                ds["path"],
+                batch_size=ds.get("batch_size", 32),
+                num_workers=ds.get("num_workers", 2),
+                val_split=ds.get("validation_split", 0.1),
+            )
+            return t, v
+        else:
+            from backend.datasets.image_caption import create_dataloader
+            t, _ = create_dataloader(ds["path"], batch_size=ds.get("batch_size", 1))
+            return t, None
+    
     raise ValueError("No dataset. Set dataset.path or dataset.builtin.")
 
 def _build_loss_fn(config):

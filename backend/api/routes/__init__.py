@@ -8,6 +8,7 @@ from .inspection import router as inspection_router
 from .optuna import router as optuna_router
 from .system import router as system_router
 from .vision import router as vision_router
+from .export import router as export_router
 
 all_routers = [
     configs_router,
@@ -19,5 +20,6 @@ all_routers = [
     inspection_router,
     optuna_router,
     system_router,
-    vision_router
+    vision_router,
+    export_router,
 ]

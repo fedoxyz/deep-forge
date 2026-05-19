@@ -122,65 +122,8 @@ class BundleWrapper(nn.Module):
             trainer = self._trainer_ref
             low_vram = trainer is not None and getattr(trainer, 'low_vram', False)
     
-            # ── DIAGNOSTIC ──
-            print(f"[forward_pass] low_vram={low_vram}, trainer={trainer is not None}")
-            if trainer is not None:
-                print(f"[forward_pass] trainer.low_vram={getattr(trainer, 'low_vram', 'MISSING')}")
-                print(f"[forward_pass] offload_device={getattr(trainer, '_offload_device', 'MISSING')}")
-            if self._bundle:
-                for comp in self._bundle:
-                    if comp.module is not None:
-                        try:
-                            p = next(iter(comp.module.parameters()))
-                            print(f"[forward_pass] comp={comp.name} trainable={comp.trainable} device={p.device}")
-                        except StopIteration:
-                            print(f"[forward_pass] comp={comp.name} has no parameters")
-            # ── END DIAGNOSTIC ── 
             if low_vram:
-                # Frozen models (text encoder, VAE): move to GPU only for encode, then back
-                frozen_comps = [c for c in self._bundle 
-                                if not c.trainable and c.module is not None]
-                
-                # Phase 1: encode with frozen models
-                for fc in frozen_comps:
-                    fc.module.to(trainer.device)
-                
-                pixels = batch.get('pixel_values', batch.get('input'))
-                pixels = pixels.to(trainer.device, self._pipeline.dtype)
-                
-                with torch.no_grad():
-                    latents   = self._pipeline.encode_image(pixels)
-                    caption   = batch.get('caption', batch.get('text', '')) or '.'
-                    if isinstance(caption, (list, tuple)):
-                        caption = caption[0] if caption else '.'
-                    condition = self._pipeline.encode_prompt(str(caption).strip() or '.')
-                
-                # Phase 2: offload frozen models
-                for fc in frozen_comps:
-                    fc.module.to(trainer._offload_device)
-                torch.cuda.empty_cache()
-                
-                # Phase 3: DiT forward — layer streaming handles VRAM automatically
-                # No need to manually move the DiT at all
-                latents   = latents.to(trainer.device, self._pipeline.dtype)
-                if isinstance(condition, dict):
-                    condition = {k: v.to(trainer.device, self._pipeline.dtype) 
-                                 if isinstance(v, torch.Tensor) else v
-                                 for k, v in condition.items()}
-                
-                noise     = self._pipeline.get_noise(latents.shape)
-                timesteps = self._pipeline.get_timesteps(latents.shape[0])
-                noisy     = self._pipeline.add_noise(latents, noise, timesteps)
-                target    = self._pipeline.compute_target(latents, noise, timesteps)
-                
-                prediction = self._pipeline.forward_denoise(noisy, timesteps, condition)
-                loss = self._pipeline.compute_loss(prediction, target, timesteps)
-                
-                del noisy, prediction, target, condition, latents
-                return {'loss': loss}
-            
-            # Non-low_vram: unchanged
-            return self._pipeline.training_step(batch)
+                return self._pipeline.training_step(batch)
 
     def _single_component_forward(self, batch):
         """Forward for single-component bundles."""

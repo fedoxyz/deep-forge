@@ -211,6 +211,8 @@ def _try_special_loader(role: str, path: str, spec: dict) -> Optional[nn.Module]
     to generic state dict loading.
     """
     import torch
+    from backend.core.model_downloader import ensure_model_file
+    path = ensure_model_file(path)
     filename = os.path.basename(path).lower()
 
     dtype_str = spec.get('dtype', 'bfloat16')

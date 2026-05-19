@@ -113,6 +113,7 @@ DEFAULT_CONFIG = {
     'dataset': {
         'path': '',
         'builtin': None,
+        'dataset_type': 'caption',
         'batch_size': 1,
         'num_workers': 4,
         'center_crop': True,
@@ -307,6 +308,10 @@ def validate_config(config: Dict[str, Any]) -> list:
     ds = config.get('dataset', {})
     if not ds.get('path') and not ds.get('builtin'):
         errors.append("dataset.path or dataset.builtin required")
+
+    valid_dataset_types = ('caption', 'classification')
+    if ds.get('dataset_type', 'caption') not in valid_dataset_types:
+        errors.append(f"dataset.dataset_type must be one of {valid_dataset_types}")
 
     if config.get('training', {}).get('epochs', 1) <= 0:
         errors.append("training.epochs must be positive")

@@ -140,7 +140,7 @@ class UnifiedTrainer:
                             model=inner_model,
                             device=self.device,
                             offload_device=self._offload_device,
-                            min_param_bytes=50_000_000,  # stream layers >50MB
+                            min_param_bytes=1_000_000,  # stream layers >50MB
                             dtype=self.amp_dtype if self.amp_dtype != torch.float32 else None,
                         )
                         self._layer_streamer.enable()

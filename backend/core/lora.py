@@ -285,6 +285,52 @@ class LoRAInjector:
     
         print(f"[LoRA] Saved {len(state_dict)} tensors to {path}")
 
+    def save_weights_comfyui(self, path: str):
+        """
+        Export LoRA in ComfyUI format. Call this only on explicit user export,
+        not during training checkpoints.
+    
+        Converts internal format to ComfyUI's expected naming:
+          model.layers.N.attention.to_q  ->  diffusion_model.layers.N.attention.to_q
+          lora_A.weight                  ->  lora_down.weight
+          lora_B.weight                  ->  lora_up.weight
+          + alpha scalar per layer
+        """
+        import torch
+        from safetensors.torch import save_file
+    
+        sd = {}
+        for layer_name, lora_module in self.lora_layers.items():
+            # Normalize prefix: internal uses 'model.', ComfyUI needs 'diffusion_model.'
+            if layer_name.startswith('model.'):
+                comfy_layer = 'diffusion_model.' + layer_name[len('model.'):]
+            elif layer_name.startswith('diffusion_model.'):
+                comfy_layer = layer_name
+            else:
+                comfy_layer = 'diffusion_model.' + layer_name
+    
+            for pname, param in lora_module.named_parameters():
+                comfy_pname = (pname
+                    .replace('lora_A.', 'lora_down.')
+                    .replace('lora_B.', 'lora_up.'))
+                sd[f"{comfy_layer}.{comfy_pname}"] = (
+                    param.data.contiguous().cpu().to(torch.float16)
+                )
+    
+            # Alpha scalar — one per layer
+            sd[f"{comfy_layer}.alpha"] = torch.tensor(
+                float(lora_module.alpha), dtype=torch.float32
+            )
+    
+        metadata = {
+            'rank': str(self.rank),
+            'alpha': str(self.alpha),
+            'format': 'comfyui',
+            'base_model': 'zimage_turbo',
+        }
+        save_file(sd, path, metadata=metadata)
+        print(f"[LoRA] Exported ComfyUI LoRA ({len(self.lora_layers)} layers) → {path}")
+
     def load_weights(self, path: str):
         """Load LoRA weights."""
         if path.endswith('.safetensors'):

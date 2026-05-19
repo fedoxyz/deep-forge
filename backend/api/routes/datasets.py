@@ -9,10 +9,11 @@ Extends the existing datasets.py routes (catalog/builtin) with:
 """
 
 from typing import Any, Dict, List, Optional
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, Body
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, Body, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from backend.datasets.image_caption import find_closest_bucket, DEFAULT_BUCKETS
+from backend.api.models import LabelUpdateRequest
 from pathlib import Path
 from PIL import Image
 import os, shutil
@@ -75,25 +76,34 @@ class CropToBucketRequest(BaseModel):
 # ── Dataset management ──
 
 @router.post("/create")
-async def create_dataset(name: str = Form(...)):
-    """Create a new empty dataset directory."""
+async def create_dataset(
+    name: str = Form(...),
+    base_dir: str = Form(None),
+    dataset_type: str = Form("caption"),
+):
     from configs.config import DATASET_BASE_DIR
-    dataset_dir = os.path.join(DATASET_BASE_DIR, name)
+    root = base_dir or DATASET_BASE_DIR
+    dataset_dir = os.path.join(root, name)
     if os.path.exists(dataset_dir):
         raise HTTPException(status_code=409, detail=f"Directory already exists: {dataset_dir}")
     os.makedirs(dataset_dir, exist_ok=True)
-    # Auto-load it
+
+    # Persist the type choice as a metadata file
+    meta = {"dataset_type": dataset_type}
+    with open(os.path.join(dataset_dir, ".dataset_meta.json"), "w") as f:
+        import json; json.dump(meta, f)
+
     from backend.datasets.dataset_manager import scan_dataset
     info = scan_dataset(dataset_dir)
     return {
         "dataset_id": info.dataset_id,
         "directory": info.directory,
         "total_images": 0,
+        "dataset_type": dataset_type,
     }
 
-
 @router.post("/{dataset_id}/upload")
-async def upload_files(dataset_id: str, files: List[UploadFile] = File(...)):
+async def upload_files(dataset_id: str, request: Request):
     """Upload image and/or caption files to a loaded dataset."""
     from backend.datasets.dataset_manager import get_loaded_dataset, scan_dataset
 
@@ -101,23 +111,40 @@ async def upload_files(dataset_id: str, files: List[UploadFile] = File(...)):
     if not ds:
         raise HTTPException(status_code=404, detail="Dataset not loaded")
 
+    # Parse with raised limits
+    form = await request.form(max_files=50_000, max_fields=50_000)
+    files = form.getlist("files")
+
     uploaded = []
     errors = []
     allowed_ext = {'.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.txt'}
 
     for file in files:
+        if not hasattr(file, 'filename') or not file.filename:
+            continue
+
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in allowed_ext:
             errors.append(f"Skipped {file.filename}: unsupported extension")
             continue
 
-        # Sanitize filename - keep only the basename
-        safe_name = os.path.basename(file.filename)
-        dest = os.path.join(ds.directory, safe_name)
+        parts = Path(file.filename.replace("\\", "/")).parts
+        if len(parts) >= 2 and ds.dataset_type == 'classification':
+            class_dir = os.path.join(ds.directory, parts[-2])
+            os.makedirs(class_dir, exist_ok=True)
+            safe_name = os.path.join(parts[-2], parts[-1])
+            dest = os.path.join(ds.directory, safe_name)
+        else:
+            safe_name = parts[-1]
+            dest = os.path.join(ds.directory, safe_name)
+
+        if not os.path.abspath(dest).startswith(os.path.abspath(ds.directory)):
+            errors.append(f"Access denied: {file.filename}")
+            continue
+
         try:
-            # Read in chunks for large files
             with open(dest, 'wb') as out:
-                while chunk := await file.read(1024 * 1024):  # 1MB chunks
+                while chunk := await file.read(1024 * 1024):
                     out.write(chunk)
             uploaded.append(safe_name)
         except Exception as e:
@@ -125,9 +152,7 @@ async def upload_files(dataset_id: str, files: List[UploadFile] = File(...)):
         finally:
             await file.close()
 
-    # Re-scan to pick up new files
     info = scan_dataset(ds.directory)
-
     return {
         "uploaded": uploaded,
         "errors": errors,
@@ -136,6 +161,42 @@ async def upload_files(dataset_id: str, files: List[UploadFile] = File(...)):
         "total_with_captions": info.total_with_captions,
     }
 
+@router.post("/load-classification")
+async def load_classification_dataset(req: LoadDatasetRequest):
+    """Explicitly load a folder-per-class classification dataset."""
+    from backend.datasets.dataset_manager import scan_classification_dataset
+    try:
+        info = scan_classification_dataset(req.directory)
+        classes = list({e.caption for e in info.entries})
+        return {
+            "dataset_id": info.dataset_id,
+            "directory": info.directory,
+            "total_images": info.total_images,
+            "dataset_type": "classification",
+            "classes": sorted(classes),
+            "num_classes": len(classes),
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+@router.get("/classification/class-map")
+async def get_classification_class_map():
+    """
+    Returns the class↔index mapping from the most recently loaded
+    classification dataset (populated when training starts).
+    """
+    from backend.datasets.classification import get_class_mapping
+    class_to_idx, idx_to_class = get_class_mapping()
+    if not class_to_idx:
+        raise HTTPException(
+            status_code=404,
+            detail="No classification dataset loaded yet. Start training first."
+        )
+    return {
+        "class_to_idx": class_to_idx,           # {"king": 0, "queen": 1, ...}
+        "idx_to_class": {str(k): v for k, v in idx_to_class.items()},  # JSON keys must be strings
+        "num_classes": len(class_to_idx),
+    }
 
 @router.delete("/{dataset_id}/file/{filename:path}")
 async def delete_file(dataset_id: str, filename: str):
@@ -217,6 +278,21 @@ async def load_dataset(req: LoadDatasetRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/{dataset_id}/classes")
+async def get_class_distribution(dataset_id: str):
+    from backend.datasets.dataset_manager import get_loaded_dataset
+    from collections import Counter
+    ds = get_loaded_dataset(dataset_id)
+    if not ds:
+        raise HTTPException(404, "Dataset not loaded")
+    if ds.dataset_type != "classification":
+        raise HTTPException(400, "Not a classification dataset")
+    counts = Counter(e.caption for e in ds.entries)
+    return {
+        "classes": [{"name": k, "count": v} for k, v in sorted(counts.items())],
+        "num_classes": len(counts),
+        "total_images": ds.total_images,
+    }
 
 @router.get("/loaded")
 async def list_loaded():
@@ -524,3 +600,84 @@ async def find_similar(dataset_id: str, params: ConceptAnalysisParams = ConceptA
     analysis = _analyze(dataset_id, **params.dict())
     groups = find_similar_phrases(analysis["concepts"])
     return {"groups": groups}
+
+@router.get("/{dataset_id}/labels/{image_index}")
+async def get_labels(dataset_id: str, image_index: int):
+    """Return raw YOLO label text for one image."""
+    from backend.datasets.dataset_manager import get_loaded_dataset
+    ds = get_loaded_dataset(dataset_id)
+    if not ds or image_index < 0 or image_index >= len(ds.entries):
+        raise HTTPException(404, "Not found")
+    entry = ds.entries[image_index]
+    img_path = Path(entry.image_path)
+    label_path = img_path.with_suffix('.txt')
+    if not label_path.exists():
+        return ""  # plain text, empty
+    from fastapi.responses import PlainTextResponse
+    return PlainTextResponse(label_path.read_text(encoding='utf-8'))
+
+@router.put("/{dataset_id}/labels/{image_index}")
+async def update_labels(dataset_id: str, image_index: int, req: LabelUpdateRequest):
+    """Write YOLO label text for one image."""
+    from backend.datasets.dataset_manager import get_loaded_dataset
+    ds = get_loaded_dataset(dataset_id)
+    if not ds or image_index < 0 or image_index >= len(ds.entries):
+        raise HTTPException(404, "Not found")
+    entry = ds.entries[image_index]
+    img_path = Path(entry.image_path)
+    label_path = img_path.with_suffix('.txt')
+    label_path.write_text(req.labels, encoding='utf-8')
+    # Update in-memory entry
+    entry.caption_path = str(label_path)
+    entry.has_caption_file = True
+    return {"status": "ok", "path": str(label_path)}
+
+@router.get("/{dataset_id}/mask/{image_index}")
+async def get_mask_preview(dataset_id: str, image_index: int):
+    """Render YOLO segmentation polygons as a PNG mask overlay."""
+    from backend.datasets.dataset_manager import get_loaded_dataset
+    ds = get_loaded_dataset(dataset_id)
+    if not ds or image_index < 0 or image_index >= len(ds.entries):
+        raise HTTPException(404, "Not found")
+    entry = ds.entries[image_index]
+    img_path = Path(entry.image_path)
+    label_path = img_path.with_suffix('.txt')
+    if not label_path.exists():
+        raise HTTPException(404, "No labels")
+    
+    import numpy as np
+    from PIL import Image as PILImage, ImageDraw
+    from fastapi.responses import Response
+    import io
+
+    with PILImage.open(img_path) as img:
+        W, H = img.size
+        mask = PILImage.new('RGBA', (W, H), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(mask)
+        
+        COLORS = [(239,68,68),(59,130,246),(34,197,94),(245,158,11),(168,85,247)]
+        
+        for line in label_path.read_text().strip().split('\n'):
+            parts = line.strip().split()
+            if len(parts) < 5:
+                continue
+            cls = int(parts[0])
+            coords = list(map(float, parts[1:]))
+            color = COLORS[cls % len(COLORS)] + (100,)
+            
+            if len(coords) == 4:
+                # bbox
+                cx, cy, w, h = coords
+                x1, y1 = int((cx-w/2)*W), int((cy-h/2)*H)
+                x2, y2 = int((cx+w/2)*W), int((cy+h/2)*H)
+                draw.rectangle([x1,y1,x2,y2], outline=color[:3]+(200,), width=2, fill=color)
+            else:
+                # polygon
+                pts = [(int(coords[i]*W), int(coords[i+1]*H)) for i in range(0, len(coords)-1, 2)]
+                if len(pts) >= 3:
+                    draw.polygon(pts, outline=color[:3]+(220,), fill=color)
+        
+        composite = PILImage.alpha_composite(img.convert('RGBA'), mask)
+        buf = io.BytesIO()
+        composite.convert('RGB').save(buf, format='JPEG', quality=85)
+        return Response(buf.getvalue(), media_type='image/jpeg')

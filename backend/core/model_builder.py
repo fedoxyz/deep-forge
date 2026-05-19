@@ -176,7 +176,140 @@ LAYER_REGISTRY: Dict[str, Dict[str, Any]] = {
         'defaults': {},
         'category': 'embedding',
     },
+    'rope_2d': {
+        'class': None,  # implemented in seg_blocks.py
+        'params': {'dim': 'int', 'heads': 'int'},
+        'defaults': {'dim': 256, 'heads': 8},
+        'category': 'attention',
+        'description': '2D Rotary Position Encoding applied to Q,K in attention',
+    },
+    'swiglu_ffn': {
+        'class': None,
+        'params': {'dim': 'int', 'mlp_ratio': 'float'},
+        'defaults': {'dim': 256, 'mlp_ratio': 4.0},
+        'category': 'feedforward',
+        'description': 'SwiGLU feed-forward block: silu(gate)*up → down',
+    },
+    'sdpa_attention': {
+        'class': None,
+        'params': {'dim': 'int', 'heads': 'int', 'drop_path': 'float'},
+        'defaults': {'dim': 256, 'heads': 8, 'drop_path': 0.0},
+        'category': 'attention',
+        'description': 'Scaled dot-product self-attention (pre-norm, no positional encoding)',
+    },
+    'cross_attention': {
+        'class': None,
+        'params': {'dim': 'int', 'heads': 'int'},
+        'defaults': {'dim': 256, 'heads': 8},
+        'category': 'attention',
+        'description': 'Cross-attention: queries attend to context tokens',
+    },
+    'patch_embed': {
+        'class': None,
+        'params': {'in_channels': 'int', 'patch_size': 'int', 'dim': 'int'},
+        'defaults': {'in_channels': 3, 'patch_size': 16, 'dim': 256},
+        'category': 'embedding',
+        'description': 'Splits image into patches, projects to latent dim',
+    },
+    'rope_encoder_block': {
+        'class': None,
+        'params': {'dim': 'int', 'heads': 'int', 'mlp_ratio': 'float', 'drop_path': 'float'},
+        'defaults': {'dim': 256, 'heads': 8, 'mlp_ratio': 4.0, 'drop_path': 0.0},
+        'category': 'encoder',
+        'description': 'Full transformer encoder block with 2D RoPE + SwiGLU',
+        'macro': True,  # ← signals frontend to show "expand" option
+    },
+    'fpn_neck': {
+        'class': None,
+        'params': {'in_dims': 'str', 'fpn_dim': 'int', 'tap_indices': 'str'},
+        'defaults': {'in_dims': '256,256,256', 'fpn_dim': 256, 'tap_indices': '2,5,7'},
+        'category': 'neck',
+        'description': 'FPN multi-scale feature fusion, top-down with bilinear upsampling',
+    },
+    'conditioning_slot': {
+        'class': None,
+        'params': {'dim': 'int', 'mode': 'choice:null,text,image_ref,box'},
+        'defaults': {'dim': 256, 'mode': 'null'},
+        'category': 'conditioning',
+        'description': 'Null conditioning token (V1). Future: text/image/box conditioning',
+    },
+    'decoder_block': {
+        'class': None,
+        'params': {'dim': 'int', 'heads': 'int'},
+        'defaults': {'dim': 256, 'heads': 8},
+        'category': 'decoder',
+        'description': 'Cross-attention decoder: queries → conditioning → image features',
+        'macro': True,
+    },
+    'mask_head': {
+        'class': None,
+        'params': {'dim': 'int', 'fpn_dim': 'int'},
+        'defaults': {'dim': 256, 'fpn_dim': 256},
+        'category': 'head',
+        'description': 'Dot-product mask generation + bilinear upsample to full resolution',
+    },
 }
+
+MACRO_EXPANSIONS = {
+    'rope_encoder_block': lambda p: [
+        {'type': 'layernorm', 'normalized_shape': p.get('dim', 256)},
+        {'type': 'rope_2d', 'dim': p.get('dim', 256), 'heads': p.get('heads', 8)},
+        {'type': 'sdpa_attention', 'dim': p.get('dim', 256), 'heads': p.get('heads', 8),
+         'drop_path': p.get('drop_path', 0.0)},
+        {'type': 'layernorm', 'normalized_shape': p.get('dim', 256)},
+        {'type': 'swiglu_ffn', 'dim': p.get('dim', 256), 'mlp_ratio': p.get('mlp_ratio', 4.0)},
+    ],
+    'decoder_block': lambda p: [
+        {'type': 'layernorm', 'normalized_shape': p.get('dim', 256)},
+        {'type': 'sdpa_attention', 'dim': p.get('dim', 256), 'heads': p.get('heads', 8), 'drop_path': 0.0},
+        {'type': 'layernorm', 'normalized_shape': p.get('dim', 256)},
+        {'type': 'cross_attention', 'dim': p.get('dim', 256), 'heads': p.get('heads', 8)},
+        {'type': 'layernorm', 'normalized_shape': p.get('dim', 256)},
+        {'type': 'swiglu_ffn', 'dim': p.get('dim', 256), 'mlp_ratio': 4.0},
+    ],
+}
+
+def expand_macros(layers: list) -> list:
+    """Expand macro blocks into their constituent primitives."""
+    expanded = []
+    for layer in layers:
+        lt = layer.get('type', '')
+        if lt in MACRO_EXPANSIONS:
+            params = {k: v for k, v in layer.items() if k != 'type'}
+            expanded.extend(MACRO_EXPANSIONS[lt](params))
+        else:
+            expanded.append(layer)
+    return expanded
+
+def _register_blocks():
+    from backend.core.transformer_blocks import (
+        PatchEmbed, RoPEEncoderBlock, SwiGLUFFN,
+        SDPASelfAttention, CrossAttention, RoPE2D, DecoderBlock,
+    )
+    from backend.core.vision_heads import (
+        FPNNeck, ConditioningSlot, MaskHead,
+    )
+
+    transformer_classes = {
+        'rope_2d':            RoPE2D,
+        'swiglu_ffn':         SwiGLUFFN,
+        'sdpa_attention':     SDPASelfAttention,
+        'cross_attention':    CrossAttention,
+        'patch_embed':        PatchEmbed,
+        'rope_encoder_block': RoPEEncoderBlock,
+        'decoder_block':      DecoderBlock,
+    }
+    head_classes = {
+        'fpn_neck':           FPNNeck,
+        'conditioning_slot':  ConditioningSlot,
+        'mask_head':          MaskHead,
+    }
+
+    for name, cls in {**transformer_classes, **head_classes}.items():
+        if name in LAYER_REGISTRY:
+            LAYER_REGISTRY[name]['class'] = cls
+
+_register_blocks()
 
 
 # ── Builder ──

@@ -532,17 +532,30 @@ export default function ConfigsPage({ onNavigate = null }) {
               </div>
             </Section>
 
-            <Section title="Dataset">
-              <Field label="Dataset Path" value={config.dataset?.path} onChange={(v) => upd('dataset', 'path', v)} />
-              <Field label="Builtin" value={config.dataset?.builtin || ''} onChange={(v) => upd('dataset', 'builtin', v || null)}
-                help="Or use a built-in dataset: mnist, cifar10, etc." />
-              <Field label="Batch Size" value={config.dataset?.batch_size} onChange={(v) => upd('dataset', 'batch_size', parseInt(v))} type="number" />
-              <Field label="Num Workers" value={config.dataset?.num_workers} onChange={(v) => upd('dataset', 'num_workers', parseInt(v))} type="number" />
-              <button onClick={() => onNavigate('datasets')}
-                className="text-xs text-forge-accent hover:underline">
-                Browse Dataset →
-              </button>
-            </Section>
+          <Section title="Dataset">
+            <Field label="Dataset Path" value={config.dataset?.path} onChange={(v) => upd('dataset', 'path', v)} />
+            <Field label="Dataset Type" value={config.dataset?.dataset_type || 'caption'}
+              onChange={(v) => upd('dataset', 'dataset_type', v)}
+              type="select" options={[
+                { value: 'caption', label: 'Caption (image + .txt)' },
+                { value: 'classification', label: 'Classification (folder per class)' },
+              ]} />
+            <Field label="Builtin" value={config.dataset?.builtin || ''} onChange={(v) => upd('dataset', 'builtin', v || null)}
+              help="Or use a built-in dataset: mnist, cifar10, etc." />
+            <Field label="Batch Size" value={config.dataset?.batch_size} onChange={(v) => upd('dataset', 'batch_size', parseInt(v))} type="number" />
+            <Field label="Num Workers" value={config.dataset?.num_workers} onChange={(v) => upd('dataset', 'num_workers', parseInt(v))} type="number" />
+            {config.dataset?.dataset_type === 'classification' && (
+              <>
+                <Field label="Validation Split" value={config.dataset?.validation_split ?? 0.1}
+                  onChange={(v) => upd('dataset', 'validation_split', parseFloat(v))}
+                  type="number" help="Fraction held out for validation" />
+              </>
+            )}
+            <button onClick={() => onNavigate('datasets')}
+              className="text-xs text-forge-accent hover:underline">
+              Browse Dataset →
+            </button>
+          </Section>
 
             <Section title="Training">
               <Field label="Epochs" value={config.training?.epochs} onChange={(v) => upd('training', 'epochs', parseInt(v))} type="number" />

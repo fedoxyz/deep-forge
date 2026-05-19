@@ -10,13 +10,10 @@ split into dedicated sub-modules under backend/api/:
     models.py        — Pydantic request/response schemas
     dependencies.py  — singletons, directory constants
 """
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.api.middleware.auth import PasswordMiddleware
-
 from backend.api.routes import all_routers
-
 
 def create_app() -> FastAPI:
     app = FastAPI(title="LoRA Forge API", version="3.0.0")
@@ -31,12 +28,16 @@ def create_app() -> FastAPI:
     for router in all_routers:
         app.include_router(router)
 
+    # ── Raise multipart limits for large folder uploads ──
+    from starlette.formparsers import MultiPartParser
+    MultiPartParser.max_fields = 100_000
+    MultiPartParser.max_files  = 100_000
+
     @app.on_event("startup")
     async def startup():
         from backend.datasets.dataset_manager import restore_loaded_datasets
         restore_loaded_datasets()
 
     return app
-
 
 app = create_app()

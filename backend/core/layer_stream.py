@@ -160,13 +160,12 @@ class TrainingLayerStreamer:
     def _post_hook(self, module, args, output):
         """
         After forward: offload weights but NOT activations.
-        Activations are in `output` and stay on GPU for backward.
-        Weights are freed from GPU — they'll be reloaded during backward
-        via the saved_tensors mechanism + autograd hooks.
+        Only offload params that require_grad=False (frozen base weights).
+        LoRA params (requires_grad=True) stay on GPU.
         """
-        # Only offload the parameters, not the output tensor
-        for param in module.parameters(recurse=False):
-            param.data = param.data.to(self.offload_device)
+        for param in module.parameters(recurse=True):   # ← recurse=True to match pre_hook
+            if not param.requires_grad:                  # ← only offload frozen params
+                param.data = param.data.to(self.offload_device)
 
     def enable(self):
         """Register hooks — call once before training loop."""
@@ -185,8 +184,6 @@ class TrainingLayerStreamer:
         for h in self._hooks:
             h.remove()
         self._hooks.clear()
-        # Restore all params to GPU
-        self.model.to(self.device)
 
 class VRAMMonitor:
     """Lightweight VRAM tracker — attach to trainer for live monitoring."""

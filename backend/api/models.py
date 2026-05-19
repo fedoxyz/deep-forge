@@ -61,3 +61,6 @@ class OptunaRequest(BaseModel):
 class HparamConfigSave(BaseModel):
     name: str
     config: Dict[str, Any]
+
+class LabelUpdateRequest(BaseModel):
+    labels: str  # raw YOLO text content

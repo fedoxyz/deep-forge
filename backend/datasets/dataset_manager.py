@@ -72,6 +72,7 @@ class DatasetInfo:
     total_images: int = 0
     total_with_captions: int = 0
     total_without_captions: int = 0
+    dataset_type: str = "caption"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -81,6 +82,7 @@ class DatasetInfo:
             "total_with_captions": self.total_with_captions,
             "total_without_captions": self.total_without_captions,
             "entries": [e.to_dict() for e in self.entries],
+            "dataset_type": self.dataset_type,
         }
 
 
@@ -99,6 +101,13 @@ def scan_dataset(directory: str) -> DatasetInfo:
     directory = os.path.abspath(directory)
     if not os.path.isdir(directory):
         raise FileNotFoundError(f"Directory not found: {directory}")
+    # auto-detect classification layout ──
+    root = Path(directory)
+    subdirs = [d for d in root.iterdir() if d.is_dir() and not d.name.startswith('.')]
+    top_level_images = [f for f in root.iterdir()
+                        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS]
+    if subdirs and not top_level_images:
+        return scan_classification_dataset(directory)
 
     ds_id = _dataset_id(directory)
     entries = []
@@ -138,7 +147,16 @@ def scan_dataset(directory: str) -> DatasetInfo:
             file_size=file_size,
             has_caption_file=has_caption,
         ))
-
+    # Read persisted metadata if present
+    meta_path = root / ".dataset_meta.json"
+    dataset_type = "caption"
+    if meta_path.exists():
+        try:
+            with open(meta_path) as f:
+                meta = json.load(f)
+            dataset_type = meta.get("dataset_type", "caption")
+        except Exception:
+            pass
     info = DatasetInfo(
         dataset_id=ds_id,
         directory=directory,
@@ -146,12 +164,64 @@ def scan_dataset(directory: str) -> DatasetInfo:
         total_images=len(entries),
         total_with_captions=sum(1 for e in entries if e.has_caption_file and e.caption),
         total_without_captions=sum(1 for e in entries if not e.has_caption_file or not e.caption),
+        dataset_type=dataset_type,
     )
-
     _loaded_datasets[ds_id] = info
     _save_loaded_datasets()
     return info
 
+def scan_classification_dataset(directory: str) -> DatasetInfo:
+    """
+    Scan a classification dataset where subdirs = class names.
+    Each ImageEntry gets caption = class_name (usable as label).
+    """
+    directory = os.path.abspath(directory)
+    if not os.path.isdir(directory):
+        raise FileNotFoundError(f"Directory not found: {directory}")
+
+    ds_id = _dataset_id(directory)
+    entries = []
+    root = Path(directory)
+
+    # Each subdir is a class
+    class_dirs = sorted([d for d in root.iterdir() if d.is_dir() and not d.name.startswith('.')])
+
+    for class_dir in class_dirs:
+        class_name = class_dir.name
+        image_files = sorted([
+            f for f in class_dir.iterdir()
+            if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
+        ])
+        for img_path in image_files:
+            try:
+                with Image.open(img_path) as img:
+                    w, h = img.size
+            except Exception:
+                continue
+
+            entries.append(ImageEntry(
+                filename=str(img_path.relative_to(root)),  # e.g. "cat/img001.jpg"
+                image_path=str(img_path),
+                caption_path=None,
+                caption=class_name,   # class name stored as caption
+                width=w,
+                height=h,
+                file_size=img_path.stat().st_size,
+                has_caption_file=False,
+            ))
+
+    info = DatasetInfo(
+        dataset_id=ds_id,
+        directory=directory,
+        entries=entries,
+        total_images=len(entries),
+        total_with_captions=len(entries),   # all have a class label
+        total_without_captions=0,
+        dataset_type="classification",
+    )
+    _loaded_datasets[ds_id] = info
+    _save_loaded_datasets()
+    return info
 
 def get_loaded_dataset(dataset_id: str) -> Optional[DatasetInfo]:
     return _loaded_datasets.get(dataset_id)
@@ -164,10 +234,10 @@ def get_all_loaded() -> Dict[str, Dict[str, Any]]:
             "directory": info.directory,
             "total_images": info.total_images,
             "total_with_captions": info.total_with_captions,
+            "dataset_type": info.dataset_type,  # ← this is the missing line
         }
         for ds_id, info in _loaded_datasets.items()
     }
-
 
 def unload_dataset(dataset_id: str) -> bool:
     if dataset_id in _loaded_datasets:

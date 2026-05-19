@@ -291,7 +291,6 @@ async def get_training_logs():
             return json.load(f)
     return {"steps": [], "epochs": []}
 
-
 # ── Helpers ──
 
 def _resolve_config(req: TrainRequest) -> dict:

@@ -90,6 +90,9 @@ export const getDatasetEntries = (datasetId, { offset = 0, limit = 50, filter = 
   return f(`/datasets/${datasetId}/entries?${params}`);
 };
 
+export const getClassDistribution = (datasetId) =>
+  f(`/datasets/${datasetId}/classes`);
+
 export const cropDatasetToBuckets = (datasetId, { filenames = null, preset = 'sdxl', minSize, maxSize, step, maxAspect } = {}) =>
   f(`/datasets/${datasetId}/crop-to-bucket`, {
     method: 'POST',
@@ -144,11 +147,12 @@ export const findSimilarPhrases = (datasetId, params = {}) =>
     body: JSON.stringify(params),
   });
 
-export const createDataset = (name, baseDir = '/workspace/dataset') => {
+export const createDataset = (name, baseDir = '/workspace/dataset', datasetType = 'caption') => {
   const pw = sessionStorage.getItem('forge_pw') || '';
   const form = new FormData();
   form.append('name', name);
   form.append('base_dir', baseDir);
+  form.append('dataset_type', datasetType);   // ← this was missing
   return fetch(`${API}/datasets/create`, {
     method: 'POST',
     body: form,
