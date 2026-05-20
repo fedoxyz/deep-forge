@@ -19,6 +19,11 @@ export function useDataset() {
   const [selectedIndices, setSelectedIndices] = useState(new Set());
   const [loadError, setLoadError] = useState('');
   const [loadingDataset, setLoadingDataset] = useState(false);
+  const [maskBusts, setMaskBusts] = useState({});
+
+  const bustMask = useCallback((filename) => {
+    setMaskBusts(prev => ({ ...prev, [filename]: Date.now() }));
+  }, []);
 
   const refreshLoaded = useCallback(async () => {
     try {
@@ -29,20 +34,20 @@ export function useDataset() {
 
   useEffect(() => { refreshLoaded(); }, []);
 
-  const fetchEntries = useCallback(async () => {
-    if (!activeDatasetId) return;
-    try {
-      const filterVal = filterMode === 'search' ? searchText : filterMode;
-      const result = await getDatasetEntries(activeDatasetId, {
-        offset: page * PAGE_SIZE, limit: PAGE_SIZE, filter: filterVal,
-      });
-      setEntries(result.entries);
-      setTotalEntries(result.total);
-      const filenames = result.entries.map(e => e.filename);
-      const { thumbnails: thumbs } = await getThumbnailsBatch(activeDatasetId, filenames, 256);
-      setThumbnails(prev => ({ ...prev, ...thumbs }));
-    } catch (e) { console.error('fetchEntries failed', e); }
-  }, [activeDatasetId, page, filterMode, searchText]);
+const fetchEntries = useCallback(async () => {
+  if (!activeDatasetId) return;
+  try {
+    const filterVal = filterMode === 'search' ? searchText : filterMode;
+    const result = await getDatasetEntries(activeDatasetId, {
+      offset: page * PAGE_SIZE, limit: PAGE_SIZE, filter: filterVal,
+    });
+    setEntries(result.entries);
+    setTotalEntries(result.total);
+    const filenames = result.entries.map(e => e.filename);
+    const { thumbnails: thumbs } = await getThumbnailsBatch(activeDatasetId, filenames, 256);
+    setThumbnails(prev => ({ ...prev, ...thumbs }));
+  } catch (e) { console.error('fetchEntries failed', e); }
+}, [activeDatasetId, page, filterMode, searchText]);
 
   useEffect(() => { if (activeDatasetId) fetchEntries(); }, [activeDatasetId, page, filterMode]);
 
@@ -121,6 +126,8 @@ const handleCreated = useCallback(async (result) => {
     activeDs: loadedDatasets[activeDatasetId] ?? null,
     selectedEntries: entries.filter(e => selectedIndices.has(e.index)),
     totalPages: Math.ceil(totalEntries / PAGE_SIZE),
-    handleCreated
+    handleCreated,
+    maskBusts,
+    bustMask,
   };
 }

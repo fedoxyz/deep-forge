@@ -15,3 +15,7 @@ body {
 ::-webkit-scrollbar-thumb:hover { background: #3a3a4a; }
 
 .glow-orange { box-shadow: 0 0 20px rgba(249, 115, 22, 0.15); }
+
+.tabs-scroll::-webkit-scrollbar { height: 2px; }
+.tabs-scroll::-webkit-scrollbar-track { background: transparent; }
+.tabs-scroll::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 2px; }

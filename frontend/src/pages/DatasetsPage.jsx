@@ -1,5 +1,5 @@
 // frontend/src/pages/DatasetsPage.jsx
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { Layers, FolderOpen, Plus, X, AlertTriangle } from 'lucide-react';
 import { useDataset } from '../hooks/useDataset';
 import { inferDatasetType, datasetTypeLabel, DATASET_TYPES } from '../types/dataset';
@@ -35,30 +35,30 @@ export default function DatasetsPage() {
   const editEntry = ds.entries.find(e => e.filename === editingFilename);
   const dsType = inferDatasetType(ds.activeDs);
 
-  const handleSelect = (entry) => {
+  const handleSelect = useCallback((entry) => {
     ds.handleSelect(entry);
     setEditingFilename(entry.filename);
     if (!showRightPanel) {
-      if (dsType === 'caption') {
-        setRightPanel('caption');
-        setShowRightPanel(true);
-      } else if (dsType === 'classification') {
-        setRightPanel('analysis');
-        setShowRightPanel(true);
-      }
-      // detection/segmentation: no right panel yet
+      if (dsType === 'caption') { setRightPanel('caption'); setShowRightPanel(true); }
+      else if (dsType === 'classification') { setRightPanel('analysis'); setShowRightPanel(true); }
     }
-  };
-
-  const handlePreview = (entry) => {
+  }, [ds.handleSelect, showRightPanel, dsType]);
+  
+  const handlePreview = useCallback((entry) => {
     setPreviewImage({
       filename: entry.filename,
       src: `/api/datasets/${ds.activeDatasetId}/image/by-filename/${encodeURIComponent(entry.filename)}`,
     });
-  };
+  }, [ds.activeDatasetId]);
+
+  const handleDelete = useCallback(async (e) => {
+    if (confirm(`Delete ${e.filename}?`)) await ds.handleDeleteSingle(e);
+  }, [ds.handleDeleteSingle]);
+  
+  const handleAnnotate = useCallback((entry) => setAnnotatingEntry(entry), []);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 overflow-x-hidden">
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold flex items-center gap-2">
@@ -93,9 +93,10 @@ export default function DatasetsPage() {
 
       {/* Dataset tabs */}
       {Object.keys(ds.loadedDatasets).length > 0 && (
-        <div className="flex items-center gap-1 border-b border-forge-border pb-0">
+        <div className="min-w-0 flex-1">
+          <div className="tabs-scroll flex items-center gap-1 border-b border-forge-border overflow-x-auto">
           {Object.entries(ds.loadedDatasets).map(([dsId, info]) => (
-            <div key={dsId} className={`group flex items-center gap-1.5 px-3 py-2 text-sm cursor-pointer border-b-2 transition-colors ${
+            <div key={dsId} className={`group shrink-0 flex items-center gap-1.5 px-3 py-2 text-sm cursor-pointer border-b-2 transition-colors ${
               ds.activeDatasetId === dsId ? 'border-forge-accent text-forge-accent' : 'border-transparent text-forge-muted hover:text-forge-text'
             }`}>
               <button onClick={() => { ds.setActiveDatasetId(dsId); ds.setPage(0); ds.setSelectedIndices(new Set()); }}>
@@ -111,6 +112,7 @@ export default function DatasetsPage() {
               </button>
             </div>
           ))}
+        </div>
         </div>
       )}
 
@@ -181,11 +183,12 @@ export default function DatasetsPage() {
               selectedIndices={ds.selectedIndices} gridSize={gridSize}
               datasetId={ds.activeDatasetId}
               onSelect={handleSelect}
-              onDelete={async (e) => { if (confirm(`Delete ${e.filename}?`)) await ds.handleDeleteSingle(e); }}
+              onDelete={handleDelete}
               onPreview={handlePreview}
-              onAnnotate={(entry) => setAnnotatingEntry(entry)}
-              onCaptionUpdate={ds.handleCaptionUpdate}
+              onAnnotate={handleAnnotate}
+              onCaptionUpdate={ds.handleCaptionUpdate} 
               dsType={dsType}
+              maskBusts={ds.maskBusts}
             />
             {/* Pagination */}
             {ds.totalPages > 1 && (
@@ -279,8 +282,14 @@ export default function DatasetsPage() {
         <AnnotationTool
           entry={annotatingEntry}
           datasetId={ds.activeDatasetId}
+          dsType={dsType}
           onClose={() => setAnnotatingEntry(null)}
-          onSaved={() => { setAnnotatingEntry(null); ds.fetchEntries(); }} />
+          onSaved={(filename) => {
+            ds.bustMask(filename);
+            setAnnotatingEntry(null);
+            ds.fetchEntries();
+          }}
+        />
       )}
     </div>
   );

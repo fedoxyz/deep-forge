@@ -1,11 +1,15 @@
-import React from 'react';
+import React, { memo, useMemo }  from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import ImageCard from './ImageCard';
 
-export default function ImageGrid({
+export default memo(function ImageGrid({
   entries, thumbnails, selectedIndices, gridSize,
-  datasetId, onSelect, onDelete, onPreview, onAnnotate, onCaptionUpdate, dsType,
+  datasetId, onSelect, onDelete, onPreview, onAnnotate, onCaptionUpdate, dsType, maskBusts
 }) {
+  const gridStyle = useMemo(() => ({ 
+    gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))` 
+  }), [gridSize]);
+
   if (entries.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-forge-muted text-sm">
@@ -16,7 +20,7 @@ export default function ImageGrid({
   }
 
   return (
-    <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${gridSize}, minmax(0, 1fr))` }}>
+    <div className="grid gap-2" style={gridStyle}>
       {entries.map(entry => (
         <ImageCard
           key={entry.filename}
@@ -31,8 +35,9 @@ export default function ImageGrid({
           datasetId={datasetId}
           onCaptionUpdate={onCaptionUpdate}
           dsType={dsType}
+          maskBust={maskBusts?.[entry.filename] ?? 0}
         />
       ))}
     </div>
   );
-}
+})

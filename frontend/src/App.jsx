@@ -108,7 +108,7 @@ export default function App() {
   return (
     <div className="flex min-h-screen bg-forge-bg">
       <Sidebar active={page} onNavigate={handleNavigate} />
-      <main className="ml-56 flex-1 p-4">
+      <main className="ml-56 flex-1 p-4 min-w-0 overflow-x-hidden">
         {Object.entries(PAGES).map(([key, PageComponent]) => (
           mounted.current.has(key) && (
             <div key={key} style={{ display: key === page ? 'block' : 'none' }}>

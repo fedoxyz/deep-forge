@@ -351,7 +351,18 @@ async def get_entries(
         "offset": offset,
         "limit": limit,
         "entries": [
-            {**e.to_dict(), "index": ds.entries.index(e)}
+            {
+                **e.to_dict(),
+                "index": ds.entries.index(e),
+                # For detection/segmentation, count label lines in the .txt file
+                "label_count": (
+                    len([l for l in open(
+                        str(Path(e.image_path).with_suffix('.txt'))
+                    ).read().splitlines() if l.strip()])
+                    if e.has_caption_file and ds.dataset_type in ('detection', 'segmentation')
+                    else None
+                ),
+            }
             for e in page
         ],
     }
@@ -617,67 +628,58 @@ async def get_labels(dataset_id: str, image_index: int):
     return PlainTextResponse(label_path.read_text(encoding='utf-8'))
 
 @router.put("/{dataset_id}/labels/{image_index}")
-async def update_labels(dataset_id: str, image_index: int, req: LabelUpdateRequest):
-    """Write YOLO label text for one image."""
+async def update_labels(dataset_id: str, image_index: int, request: Request):
     from backend.datasets.dataset_manager import get_loaded_dataset
     ds = get_loaded_dataset(dataset_id)
-    if not ds or image_index < 0 or image_index >= len(ds.entries):
+    if not ds or image_index >= len(ds.entries):
         raise HTTPException(404, "Not found")
+    body = await request.body()
+    text = body.decode('utf-8')
     entry = ds.entries[image_index]
-    img_path = Path(entry.image_path)
-    label_path = img_path.with_suffix('.txt')
-    label_path.write_text(req.labels, encoding='utf-8')
-    # Update in-memory entry
-    entry.caption_path = str(label_path)
+    label_path = Path(entry.image_path).with_suffix('.txt')
+    label_path.write_text(text, encoding='utf-8')
     entry.has_caption_file = True
-    return {"status": "ok", "path": str(label_path)}
+    return {"status": "ok"}
 
 @router.get("/{dataset_id}/mask/{image_index}")
 async def get_mask_preview(dataset_id: str, image_index: int):
-    """Render YOLO segmentation polygons as a PNG mask overlay."""
     from backend.datasets.dataset_manager import get_loaded_dataset
+    from backend.datasets.label_format import parse_labels, SegmentationLabel, DetectionLabel
+    from fastapi.responses import Response
+    from PIL import Image as PILImage, ImageDraw
+    import io, numpy as np
+
     ds = get_loaded_dataset(dataset_id)
-    if not ds or image_index < 0 or image_index >= len(ds.entries):
+    if not ds or image_index >= len(ds.entries):
         raise HTTPException(404, "Not found")
     entry = ds.entries[image_index]
-    img_path = Path(entry.image_path)
-    label_path = img_path.with_suffix('.txt')
+    label_path = Path(entry.image_path).with_suffix('.txt')
     if not label_path.exists():
         raise HTTPException(404, "No labels")
-    
-    import numpy as np
-    from PIL import Image as PILImage, ImageDraw
-    from fastapi.responses import Response
-    import io
 
-    with PILImage.open(img_path) as img:
+    COLORS = [(239,68,68),(59,130,246),(34,197,94),(245,158,11),(168,85,247)]
+
+    with PILImage.open(entry.image_path) as img:
         W, H = img.size
-        mask = PILImage.new('RGBA', (W, H), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(mask)
-        
-        COLORS = [(239,68,68),(59,130,246),(34,197,94),(245,158,11),(168,85,247)]
-        
-        for line in label_path.read_text().strip().split('\n'):
-            parts = line.strip().split()
-            if len(parts) < 5:
-                continue
-            cls = int(parts[0])
-            coords = list(map(float, parts[1:]))
-            color = COLORS[cls % len(COLORS)] + (100,)
-            
-            if len(coords) == 4:
-                # bbox
-                cx, cy, w, h = coords
-                x1, y1 = int((cx-w/2)*W), int((cy-h/2)*H)
-                x2, y2 = int((cx+w/2)*W), int((cy+h/2)*H)
-                draw.rectangle([x1,y1,x2,y2], outline=color[:3]+(200,), width=2, fill=color)
-            else:
-                # polygon
-                pts = [(int(coords[i]*W), int(coords[i+1]*H)) for i in range(0, len(coords)-1, 2)]
-                if len(pts) >= 3:
-                    draw.polygon(pts, outline=color[:3]+(220,), fill=color)
-        
-        composite = PILImage.alpha_composite(img.convert('RGBA'), mask)
+        overlay = PILImage.new('RGBA', (W, H), (0,0,0,0))
+        draw = ImageDraw.Draw(overlay)
+        labels = parse_labels(label_path.read_text())
+
+        for i, lb in enumerate(labels):
+            color = COLORS[i % len(COLORS)]
+            if isinstance(lb, DetectionLabel):
+                draw.rectangle(
+                    [lb.x1, lb.y1, lb.x2, lb.y2],
+                    outline=color+(220,), width=2, fill=color+(60,)
+                )
+            elif isinstance(lb, SegmentationLabel):
+                mask_arr = lb.to_mask(W, H)
+                mask_img = PILImage.fromarray(mask_arr * 100, 'L')  # 0 or 100 alpha
+                colored = PILImage.new('RGBA', (W,H), color+(0,))
+                colored.putalpha(mask_img)
+                overlay = PILImage.alpha_composite(overlay, colored)
+
+        composite = PILImage.alpha_composite(img.convert('RGBA'), overlay)
         buf = io.BytesIO()
         composite.convert('RGB').save(buf, format='JPEG', quality=85)
         return Response(buf.getvalue(), media_type='image/jpeg')

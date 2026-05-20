@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, memo } from 'react';
 import { Trash2, Check, Save, ChevronDown, ChevronUp, Image as ImageIcon, Square } from 'lucide-react';
 import { updateCaption } from '../../utils/api';
 
@@ -6,9 +6,9 @@ function Spinner() {
   return <div className="w-3 h-3 border border-forge-accent border-t-transparent rounded-full animate-spin" />;
 }
 
-export default function ImageCard({
+export default memo(function ImageCard({
   entry, thumbnail, isSelected, hasActiveSelection,
-  onSelect, onDelete, onPreview, onAnnotate, datasetId, onCaptionUpdate, dsType
+  onSelect, onDelete, onPreview, onAnnotate, datasetId, onCaptionUpdate, dsType, maskBust
 }) {
   const hasCaption = entry.has_caption_file && entry.caption;
   const [showCaption, setShowCaption] = useState(false);
@@ -54,16 +54,21 @@ export default function ImageCard({
         }
       {(dsType === 'detection' || dsType === 'segmentation') && entry.has_caption_file && (
         <img
-          src={`/api/datasets/${datasetId}/mask/${entry.index}`}
+          src={`/api/datasets/${datasetId}/mask/${entry.index}?t=${maskBust ?? 0}`}
           alt="mask"
           className="absolute inset-0 w-full h-full object-cover pointer-events-none"
           onError={e => { e.target.style.display = 'none'; }}
         />
       )}
 
-        {!hasCaption && dsType !='classification' &&(
+        {!hasCaption && dsType === 'caption' && (
           <span className="absolute top-1.5 left-7 bg-yellow-500/80 text-black text-[9px] font-bold px-1 py-0.5 rounded z-10">
             NO TXT
+          </span>
+        )}
+        {(dsType === 'detection' || dsType === 'segmentation') && !entry.has_caption_file && (
+          <span className="absolute top-1.5 left-7 bg-orange-500/80 text-black text-[9px] font-bold px-1 py-0.5 rounded z-10">
+            NO LABELS
           </span>
         )}
 
@@ -103,12 +108,25 @@ export default function ImageCard({
       {/* Caption / Class section */}
       <div className="border-t border-forge-border bg-forge-bg/60 flex flex-col">
         {dsType === 'classification' ? (
-          // ── Classification: show class badge, no editing ──
           <div className="flex items-center gap-2 px-2 py-1.5">
             <span className="text-[9px] uppercase tracking-wide text-forge-muted/50">class</span>
             <span className="px-1.5 py-0.5 bg-forge-accent/10 border border-forge-accent/20 text-forge-accent text-[10px] font-mono rounded truncate">
               {entry.caption || '—'}
             </span>
+          </div>
+        ) : (dsType === 'detection' || dsType === 'segmentation') ? (
+          // ── Detection / Segmentation: show label count ──
+          <div className="flex items-center gap-2 px-2 py-1.5">
+            <span className="text-[9px] uppercase tracking-wide text-forge-muted/50">labels</span>
+            {entry.has_caption_file ? (
+              <span className="px-1.5 py-0.5 bg-forge-accent/10 border border-forge-accent/20 text-forge-accent text-[10px] font-mono rounded">
+                {entry.label_count != null ? `${entry.label_count} obj` : 'labeled'}
+              </span>
+            ) : (
+              <span className="px-1.5 py-0.5 bg-orange-500/10 border border-orange-500/20 text-orange-400 text-[10px] font-mono rounded">
+                no labels
+              </span>
+            )}
           </div>
         ) : (
           // ── Caption: existing collapsible editor ──
@@ -122,7 +140,6 @@ export default function ImageCard({
                 {showCaption ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
               </span>
             </button>
-
             {showCaption && (
               <div className="px-2 pb-2 space-y-1.5" onClick={e => e.stopPropagation()}>
                 <textarea value={caption} onChange={e => { setCaption(e.target.value); setEditing(true); }}
@@ -148,3 +165,4 @@ export default function ImageCard({
     </div>
   );
 }
+)
