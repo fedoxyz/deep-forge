@@ -2,6 +2,7 @@
 import React, { useState, useCallback } from 'react';
 import { Layers, FolderOpen, Plus, X, AlertTriangle } from 'lucide-react';
 import { useDataset } from '../hooks/useDataset';
+import { cropDatasetToBuckets } from '../utils/api';
 import { inferDatasetType, datasetTypeLabel, DATASET_TYPES } from '../types/dataset';
 import ClassificationPanel from '../components/datasets/ClassificationPanel';
 import DatasetToolbar from '../components/datasets/DatasetToolbar';
@@ -56,6 +57,29 @@ export default function DatasetsPage() {
   }, [ds.handleDeleteSingle]);
   
   const handleAnnotate = useCallback((entry) => setAnnotatingEntry(entry), []);
+
+  const handleCropToBuckets = async (selectedOnly = false, cropParams = { preset: 'sdxl' }) => {
+    if (!confirm(
+      selectedOnly
+        ? `Crop ${ds.selectedIndices.size} selected image(s) to nearest training bucket? Originals are backed up to .originals/`
+        : `Crop ALL ${ds.totalEntries} images to nearest training bucket? Originals are backed up to .originals/`
+    )) return;
+    setCropping(true);
+    setCropResult(null);
+    try {
+      const filenames = selectedOnly
+        ? entries.filter(e => selectedIndices.has(e.index)).map(e => e.filename)
+        : null;
+      const result = await cropDatasetToBuckets(ds.activeDatasetId, { filenames, ...cropParams });
+      setCropResult(result);
+      fetchEntries();
+    } catch (e) {
+      console.error('Crop failed:', e);
+    }
+    setCropping(false);
+    setTimeout(() => setCropResult(null), 6000);
+  };
+
 
   return (
     <div className="space-y-5 overflow-x-hidden">
@@ -170,14 +194,9 @@ export default function DatasetsPage() {
               onCaptionSelected={() => ds.selectedEntries.length > 0 && setShowBatchCaption(true)} />
             <CropBar totalCount={ds.totalEntries} selectedCount={ds.selectedIndices.size}
               cropping={cropping} cropResult={cropResult}
-              onCropAll={async (params) => {
-                setCropping(true); setCropResult(null);
-                // call cropDatasetToBuckets then fetchEntries
-              }}
-              onCropSelected={async (params) => {
-                setCropping(true); setCropResult(null);
-                // call cropDatasetToBuckets with selected filenames
-              }} />
+              onCropAll={(params) => handleCropToBuckets(false, params)}
+              onCropSelected={(params) => handleCropToBuckets(true, params)}
+              />
             <ImageGrid
               entries={ds.entries} thumbnails={ds.thumbnails}
               selectedIndices={ds.selectedIndices} gridSize={gridSize}
